@@ -36,17 +36,31 @@ export * from ""`,
   )
 })
 
-test("dynamic import: addition", () => {
+test("static import and export: removal", () => {
   assert.equal(
     transformModulePaths(
-      `import(\`ok\`);
-import /* comment */
-( /* comment */ \`complex \${"path"} example\`);`,
-      (path) => `___${path}`,
+      `import test from 'test';
+import * as test from 'test';
+import ( 'test');`,
+      (path) => null,
     ),
-    `import(\`___ok\`);
-import /* comment */
-( /* comment */ \`___complex \${"path"} example\`);`,
+    `;
+;
+;`,
+  )
+})
+
+test("dynamic import: addition", () => {
+  assert.equal(
+    transformModulePaths(`import("ok");`, (path) => `___${path}`),
+    `import("___ok");`,
+  )
+})
+
+test("dynamic import: removal", () => {
+  assert.equal(
+    transformModulePaths(`import("ok");`, () => null),
+    `;`,
   )
 })
 

@@ -1,18 +1,22 @@
 type State = "string" | "block-comment" | "line-comment"
-type ImportType = "export-path" | "import-path" | "dynamic-import-path"
+type ImportKind = "export-path" | "import-path" | "dynamic-import-path"
 type StringKind = "'" | '"' | "`"
+type Range = [start: number, end: number]
 
 export function transformModulePaths(
   code: string,
-  transform: (path: string, type: ImportType) => string,
+  transform: (path: string, type: ImportKind) => string | null,
 ): string {
   let currentState: State | null = null
   let stringKind: StringKind | null = null
-  let importFlag: ImportType | null = null
-  let stringStartIndex = 0
-  let lastModuleIndex = 0
-  let result = ""
+  let importKind: ImportKind | null = null
 
+  let currentStringStartIndex = 0
+  let writeIndex = 0
+
+  let currentDynamicImportPaths: { path: string; range: Range }[] = []
+  let currenyModuleStartIndex: number = 0
+  let result = ""
   let index = 0
 
   while (index < code.length) {
@@ -22,12 +26,37 @@ export function transformModulePaths(
     switch (currentState) {
       case null:
         // Check if a dynamic import is being opened()
-        if (char === "(" && importFlag === "import-path") {
-          importFlag = "dynamic-import-path"
+        if (char === "(" && importKind === "import-path") {
+          importKind = "dynamic-import-path"
+          currentDynamicImportPaths.length = 0
         }
         // Check if a dynamic import is being closed()
-        else if (char === ")" && importFlag === "dynamic-import-path") {
-          importFlag = null
+        else if (char === ")" && importKind === "dynamic-import-path") {
+          importKind = null
+          if (currentDynamicImportPaths.length !== 1) {
+            console.warn(
+              "The following dynamic import cannot be transformed:",
+              code.slice(currenyModuleStartIndex, index),
+              "Only statically analysable imports can be processed: import('url')",
+            )
+          } else {
+            const {
+              path,
+              range: [startIndex, endIndex],
+            } = currentDynamicImportPaths[0]
+            const newPath = transform(path, "dynamic-import-path")
+
+            if (newPath === null) {
+              writeIndex = index + 1
+            } else {
+              // Aggregate result with
+              // - the substring from the last module to the current module-path and
+              // - the new path
+              result += code.slice(writeIndex, startIndex + 1)
+              result += newPath
+              writeIndex = endIndex
+            }
+          }
         }
         // Check if the next 2 chars open a block-comment
         else if (char === "/" && nextChar === "*") {
@@ -42,19 +71,25 @@ export function transformModulePaths(
         // Check if the next char opens a string
         else if (['"', "'", "`"].includes(char)) {
           stringKind = char as StringKind
-          stringStartIndex = index
+          currentStringStartIndex = index
           currentState = "string"
         } else {
           const keyword = code.slice(index, index + 6)
-          // Check if the next sub-string is the `import` keyword
-          if (keyword === "import") {
-            index += 5
-            importFlag = "import-path"
-          }
-          // Check if the next sub-string is the `export` keyword
-          else if (keyword === "export") {
-            index += 5
-            importFlag = "export-path"
+          if (keyword === "import" || keyword === "export") {
+            currenyModuleStartIndex = index
+            result += code.slice(writeIndex, index)
+            // Update the last-module-index
+            writeIndex = index
+            // Check if the next sub-string is the `import` keyword
+            if (keyword === "import") {
+              index += 5
+              importKind = "import-path"
+            }
+            // Check if the next sub-string is the `export` keyword
+            else if (keyword === "export") {
+              index += 5
+              importKind = "export-path"
+            }
           }
         }
         break
@@ -62,21 +97,34 @@ export function transformModulePaths(
         // Check if the opened string is being closed
         if (char === stringKind && code[index - 1] !== "\\") {
           // Check if an importFlag is currently defined
-          if (importFlag) {
+          if (importKind) {
             // Get original path from the range (excluding the quotation-marks)
-            const originalPath = code.slice(stringStartIndex + 1, index)
-            // Transform original path with transform-callback
-            const newPath = transform(originalPath, importFlag)
+            const originalPath = code.slice(currentStringStartIndex + 1, index)
 
-            // Aggregate result with
-            // - the substring from the last module to the current module-path and
-            // - the new path
-            result +=
-              code.slice(lastModuleIndex, stringStartIndex + 1) + newPath
-            // Update the last-module-index
-            lastModuleIndex = index
-            // Reset import-flag
-            importFlag = null
+            if (importKind === "dynamic-import-path") {
+              currentDynamicImportPaths.push({
+                path: originalPath,
+                range: [currentStringStartIndex, index],
+              })
+            } else {
+              // Transform original path with transform-callback
+              const newPath = transform(originalPath, importKind)
+
+              if (newPath === null) {
+                writeIndex = index + 1
+              } else {
+                // Aggregate result with
+                // - the substring from the last module to the current module-path and
+                // - the new path
+                result += code.slice(writeIndex, currentStringStartIndex + 1)
+                result += newPath
+                // Update the last-module-index
+                writeIndex = index
+              }
+
+              // Reset import-flag
+              importKind = null
+            }
           }
 
           // Reset current-state
@@ -103,5 +151,5 @@ export function transformModulePaths(
     }
     index++
   }
-  return lastModuleIndex === 0 ? code : result + code.slice(lastModuleIndex)
+  return writeIndex === 0 ? code : result + code.slice(writeIndex)
 }
