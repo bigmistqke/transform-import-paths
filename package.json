@@ -1,6 +1,6 @@
 {
   "name": "@bigmistqke/transform-module-paths",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Transform module paths of a given javascript/typescript string",
   "publishConfig": {
     "access": "public"
