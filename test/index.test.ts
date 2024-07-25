@@ -4,6 +4,50 @@ import { transformModulePaths } from "../src"
 test("static import and export: addition", () => {
   assert.equal(
     transformModulePaths(
+      `export declare function SuspenseList(props: {
+  children: JSX.Element;
+  revealOrder: "forwards" | "backwards" | "together";
+  tail?: "collapsed" | "hidden";
+}): JSX.Element;`,
+      (path, kind) => {
+        console.log(path, kind)
+        return `___${path}`
+      },
+    ),
+    `export declare function SuspenseList(props: {
+  children: JSX.Element;
+  revealOrder: "forwards" | "backwards" | "together";
+  tail?: "collapsed" | "hidden";
+}): JSX.Element;`,
+  )
+})
+
+test("static import and export: addition", () => {
+  assert.equal(
+    transformModulePaths(
+      ` // To update three.js type definition, please make changes to the repository at:
+// https://github.com/three-types/three-ts-types.
+// Periodically, the updates from the repository are pushed to DefinitelyTyped
+// and released in the @types/three npm package.
+
+export * from "./src/Three.d.ts";`,
+      (path, kind) => {
+        console.log(path, kind)
+        return `___${path}`
+      },
+    ),
+    ` // To update three.js type definition, please make changes to the repository at:
+// https://github.com/three-types/three-ts-types.
+// Periodically, the updates from the repository are pushed to DefinitelyTyped
+// and released in the @types/three npm package.
+
+export * from "___./src/Three.d.ts";`,
+  )
+})
+
+test("static import and export: addition", () => {
+  assert.equal(
+    transformModulePaths(
       `import test from 'test';
 export { data } from 'data';
 import { feature } from \`./feature\`;

@@ -1,50 +1,79 @@
-type State = "string" | "block-comment" | "line-comment"
-type ImportKind = "export-path" | "import-path" | "dynamic-import-path"
+type State = "string" | "block-comment" | "line-comment" | "code"
+type DepdendencyKind = "export" | "import" | "dynamic-import"
 type StringKind = "'" | '"' | "`"
 type Range = [start: number, end: number]
 
+// If these keywords appear when currentDependencyKind is 'export', the dependency declaration is not a module declaration.
+const NON_MODULE_EXPORT_KEYWORDS = [
+  "class",
+  "var",
+  "const",
+  "let",
+  "declare",
+  "function",
+  "namespace",
+  "interface",
+  "type",
+  "default",
+  "enum",
+]
+
 export function transformModulePaths(
   code: string,
-  transform: (path: string, type: ImportKind) => string | null,
+  transform: (path: string, type: DepdendencyKind) => string | null,
 ): string {
-  let currentState: State | null = null
-  let stringKind: StringKind | null = null
-  let importKind: ImportKind | null = null
+  let state = "code" as State
+  let keyword = ""
 
-  let currentStringStartIndex = 0
+  let moduleKind = null as DepdendencyKind | null
+  let moduleStartIndex = 0
+  let dynamicImportPaths = [] as { path: string; range: Range }[]
+
+  let stringKind = null as StringKind | null
+  let stringStartIndex = 0
+
   let writeIndex = 0
-
-  let currentDynamicImportPaths: { path: string; range: Range }[] = []
-  let currenyModuleStartIndex: number = 0
-  let result = ""
   let index = 0
+  let result = ""
 
   while (index < code.length) {
-    const char = code[index]
+    const char = code[index]!
     const nextChar = code[index + 1]
 
-    switch (currentState) {
-      case null:
+    switch (state) {
+      case "code":
+        // Check if char is a whitespace/newline
+        if (/\s/.test(char)) {
+          if (
+            moduleKind === "export" &&
+            NON_MODULE_EXPORT_KEYWORDS.includes(keyword)
+          ) {
+            moduleKind = null
+          }
+          keyword = ""
+        } else {
+          keyword += char
+        }
         // Check if a dynamic import is being opened()
-        if (char === "(" && importKind === "import-path") {
-          importKind = "dynamic-import-path"
-          currentDynamicImportPaths.length = 0
+        if (char === "(" && moduleKind === "import") {
+          moduleKind = "dynamic-import"
+          dynamicImportPaths.length = 0
         }
         // Check if a dynamic import is being closed()
-        else if (char === ")" && importKind === "dynamic-import-path") {
-          importKind = null
-          if (currentDynamicImportPaths.length !== 1) {
+        else if (char === ")" && moduleKind === "dynamic-import") {
+          moduleKind = null
+          if (dynamicImportPaths.length !== 1) {
             console.warn(
               "The following dynamic import cannot be transformed:",
-              code.slice(currenyModuleStartIndex, index),
+              code.slice(moduleStartIndex, index),
               "Only statically analysable imports can be processed: import('url')",
             )
           } else {
             const {
               path,
               range: [startIndex, endIndex],
-            } = currentDynamicImportPaths[0]
-            const newPath = transform(path, "dynamic-import-path")
+            } = dynamicImportPaths[0]
+            const newPath = transform(path, "dynamic-import")
 
             if (newPath === null) {
               writeIndex = index + 1
@@ -60,35 +89,35 @@ export function transformModulePaths(
         }
         // Check if the next 2 chars open a block-comment
         else if (char === "/" && nextChar === "*") {
-          currentState = "block-comment"
+          state = "block-comment"
           index++
         }
         // Check if the next 2 chars open a line-comment
         else if (char === "/" && nextChar === "/") {
-          currentState = "line-comment"
+          state = "line-comment"
           index++
         }
         // Check if the next char opens a string
         else if (['"', "'", "`"].includes(char)) {
           stringKind = char as StringKind
-          currentStringStartIndex = index
-          currentState = "string"
+          stringStartIndex = index
+          state = "string"
         } else {
           const keyword = code.slice(index, index + 6)
           if (keyword === "import" || keyword === "export") {
-            currenyModuleStartIndex = index
+            moduleStartIndex = index
             result += code.slice(writeIndex, index)
             // Update the last-module-index
             writeIndex = index
             // Check if the next sub-string is the `import` keyword
             if (keyword === "import") {
               index += 5
-              importKind = "import-path"
+              moduleKind = "import"
             }
             // Check if the next sub-string is the `export` keyword
             else if (keyword === "export") {
               index += 5
-              importKind = "export-path"
+              moduleKind = "export"
             }
           }
         }
@@ -97,18 +126,18 @@ export function transformModulePaths(
         // Check if the opened string is being closed
         if (char === stringKind && code[index - 1] !== "\\") {
           // Check if an importFlag is currently defined
-          if (importKind) {
+          if (moduleKind) {
             // Get original path from the range (excluding the quotation-marks)
-            const originalPath = code.slice(currentStringStartIndex + 1, index)
+            const originalPath = code.slice(stringStartIndex + 1, index)
 
-            if (importKind === "dynamic-import-path") {
-              currentDynamicImportPaths.push({
+            if (moduleKind === "dynamic-import") {
+              dynamicImportPaths.push({
                 path: originalPath,
-                range: [currentStringStartIndex, index],
+                range: [stringStartIndex, index],
               })
             } else {
               // Transform original path with transform-callback
-              const newPath = transform(originalPath, importKind)
+              const newPath = transform(originalPath, moduleKind)
 
               if (newPath === null) {
                 writeIndex = index + 1
@@ -116,19 +145,19 @@ export function transformModulePaths(
                 // Aggregate result with
                 // - the substring from the last module to the current module-path and
                 // - the new path
-                result += code.slice(writeIndex, currentStringStartIndex + 1)
+                result += code.slice(writeIndex, stringStartIndex + 1)
                 result += newPath
                 // Update the last-module-index
                 writeIndex = index
               }
 
               // Reset import-flag
-              importKind = null
+              moduleKind = null
             }
           }
 
-          // Reset current-state
-          currentState = null
+          // Reset state
+          state = "code"
           // Reset string-kind
           stringKind = null
         }
@@ -138,14 +167,14 @@ export function transformModulePaths(
         if (char === "*" && nextChar === "/") {
           index++
           // Reset current-state
-          currentState = null
+          state = "code"
         }
         break
       case "line-comment":
         // Check if the opened line-comment is being closed with a newline
         if (char === "\n") {
           // Reset current-state
-          currentState = null
+          state = "code"
         }
         break
     }
